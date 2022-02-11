@@ -135,13 +135,11 @@ private:
 
 		if (enable_validation_layers && !check_validation_layer_support())
 			throw std::runtime_error("Validation layers requested, but not supported.");
-
 		else if (enable_validation_layers)
 		{
 			create_info.enabledLayerCount = static_cast<uint32_t>(validation_layers.size());
 			create_info.ppEnabledLayerNames = validation_layers.data();
 		}
-		
 		else
 		{
 			create_info.enabledLayerCount = 0;
@@ -216,8 +214,6 @@ private:
 	bool is_device_suitable(VkPhysicalDevice device)
 	{
 		// Check for properties or features (like multipass)
-		bool is_suitable = true;
-
 		VkPhysicalDeviceProperties device_properties;
 		vkGetPhysicalDeviceProperties(device, &device_properties);
 
@@ -225,18 +221,17 @@ private:
 		vkGetPhysicalDeviceFeatures(device, &device_features);
 
 		QueueFamilyIndices indices;
-		is_suitable = find_queue_indices(device, indices);
-
-		if (!is_suitable)
+		if (!find_queue_indices(device, indices))
 			return false;
 
-		is_suitable = device_features.geometryShader;
-
-		if (!is_suitable)
+		if (!device_features.geometryShader)
 			return false;
 
-		bool extensions_supported = check_device_extensions(device);
-		if (!extensions_supported)
+		if (!check_device_extensions(device))
+			return false;
+
+		SwapChainSupportDetails swap_chain_support_details = query_swap_chain_support(device);
+		if (swap_chain_support_details.formats.empty() || swap_chain_support_details.present_modes.empty())
 			return false;
 
 		return true;
@@ -362,6 +357,19 @@ private:
 		}
 
 		return details;
+	}
+
+	VkSurfaceFormatKHR choose_swap_surface_format(const std::vector<VkSurfaceFormatKHR>& available_formats)
+	{
+		for (const auto& available_format : available_formats)
+		{
+			// We prefer format that stores the B, G, R and alpha channels in that order with an 8 bit unsigned integer for a total of 32 bits per pixel.
+			if (available_format.format == VK_FORMAT_B8G8R8A8_SRGB && available_format.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+				return available_format;
+		}
+
+		// If nothing was found just return the first available format. (We could also rank them but... it's not really that important)
+		return available_formats[0];
 	}
 
 	void cleanup()
