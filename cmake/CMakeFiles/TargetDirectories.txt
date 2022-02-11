@@ -1,0 +1,3 @@
+E:/Repos/VulkanEngine/VulkanEngine/cmake/CMakeFiles/VulkanEngine.dir
+E:/Repos/VulkanEngine/VulkanEngine/cmake/CMakeFiles/ALL_BUILD.dir
+E:/Repos/VulkanEngine/VulkanEngine/cmake/CMakeFiles/ZERO_CHECK.dir
