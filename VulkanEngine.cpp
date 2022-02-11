@@ -1,11 +1,13 @@
 ﻿#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
-#include <iostream>
-#include <stdexcept>
+#include <algorithm>
+#include <cstdint>
 #include <cstdlib>
+#include <iostream>
+#include <set>
+#include <stdexcept>
 #include <vector>
-#include <set> 
 
 class App {
 
@@ -36,6 +38,7 @@ private:
 	VkPhysicalDevice physical_device = VK_NULL_HANDLE;
 	VkQueue graphics_queue;
 	VkSurfaceKHR surface;
+	VkSwapchainKHR swap_chain;
 
 	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation" };
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -65,10 +68,12 @@ private:
 	void init_vulkan()
 	{
 		create_instance();
+		//setup_debug_messenger();
 		// Window surface needs to be created right after the instance creation, because it can actually influence the physical device selection
 		create_surface();
 		pick_physical_device();
 		create_logical_device();
+		create_swap_chain();
 	}
 
 	void main_loop()
@@ -164,7 +169,7 @@ private:
 
 			for (const auto& layer_properties : available_layers)
 			{
-				if (strcmp(layer_name, layer_properties.layerName) == 0)
+				if (std::strcmp(layer_name, layer_properties.layerName) == 0)
 				{
 					layer_found = true;
 					break;
@@ -372,8 +377,90 @@ private:
 		return available_formats[0];
 	}
 
+	VkPresentModeKHR choose_swap_present_mode(const std::vector<VkPresentModeKHR>& available_present_modes)
+	{
+		for (const auto& available_mode : available_present_modes)
+		{
+			// We prefer triple buffering
+			if (available_mode == VK_PRESENT_MODE_MAILBOX_KHR)
+				return available_mode;
+		}
+
+		return VK_PRESENT_MODE_FIFO_KHR;
+	}
+
+	VkExtent2D choose_swap_extent(const VkSurfaceCapabilitiesKHR& capabilities)
+	{
+		// Some weird things with resolution
+
+		if (capabilities.currentExtent.width != UINT32_MAX)
+			return capabilities.currentExtent;
+
+		int width, height;
+		glfwGetFramebufferSize(window, &width, &height);
+
+		VkExtent2D actual_extent = {
+			static_cast<uint32_t>(width),
+			static_cast<uint32_t>(height),
+		};
+
+		actual_extent.width = std::clamp(actual_extent.width, capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
+		actual_extent.height = std::clamp(actual_extent.height, capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
+
+		return actual_extent;
+	}
+
+	// https://vulkan-tutorial.com/Drawing_a_triangle/Presentation/Swap_chain
+	void create_swap_chain()
+	{
+		SwapChainSupportDetails swap_chain_support_details = query_swap_chain_support(physical_device);
+
+		VkSurfaceFormatKHR surface_format = choose_swap_surface_format(swap_chain_support_details.formats);
+		VkPresentModeKHR present_mode = choose_swap_present_mode(swap_chain_support_details.present_modes);
+		VkExtent2D extent = choose_swap_extent(swap_chain_support_details.capabilities);
+
+		// Aside from these properties we also have to decide how many images we would like to have in the swap chain.
+		// The implementation specifies the minimum number that it requires to function.
+		// However, simply sticking to this minimum means that we may sometimes have to wait on the driver to complete internal operations
+		// before we can acquire another image to render to. Therefore it is recommended to request at least one more image than the minimum.
+		uint32_t image_count = swap_chain_support_details.capabilities.minImageCount + 1;
+
+		// We should also make sure to not exceed the maximum number of images while doing this, where 0 is a special value that means that there is no maximum
+		if (swap_chain_support_details.capabilities.maxImageCount > 0 && image_count > swap_chain_support_details.capabilities.maxImageCount)
+			image_count = swap_chain_support_details.capabilities.maxImageCount;
+
+		VkSwapchainCreateInfoKHR create_info{};
+		create_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+		create_info.surface = surface;
+		create_info.minImageCount = image_count;
+		create_info.imageFormat = surface_format.format;
+		create_info.imageColorSpace = surface_format.colorSpace;
+		create_info.imageExtent = extent;
+		// The imageArrayLayers specifies the amount of layers each image consists of. This is always 1 unless you are developing a stereoscopic 3D application.
+		create_info.imageArrayLayers = 1;
+		// The imageUsage bit field specifies what kind of operations we'll use the images in the swap chain for.
+		// Here, we are going to render directly to them, which means that they're used as color attachment. It is also possible to render images
+		// to a separate image first to perform operations like post-processing. In that case we use a value like VK_IMAGE_USAGE_TRANSFER_DST_BIT instead
+		// and use a memory operation to transfer the rendered image to a swap chain image.
+		create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+		create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+		create_info.queueFamilyIndexCount = 0;
+		create_info.pQueueFamilyIndices = nullptr;
+		create_info.preTransform = swap_chain_support_details.capabilities.currentTransform;
+		create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+		create_info.presentMode = present_mode;
+		create_info.clipped = VK_TRUE;
+		create_info.oldSwapchain = VK_NULL_HANDLE;
+
+		if (vkCreateSwapchainKHR(device, &create_info, nullptr, &swap_chain) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create swap chain.");
+	}
+
 	void cleanup()
 	{
+		vkDestroySwapchainKHR(device, swap_chain, nullptr);
+
 		vkDestroyDevice(device, nullptr);
 
 		// Surface destroyed before the instance
