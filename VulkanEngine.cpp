@@ -39,6 +39,10 @@ private:
 	VkQueue graphics_queue;
 	VkSurfaceKHR surface;
 	VkSwapchainKHR swap_chain;
+	VkFormat swap_chain_image_format;
+	VkExtent2D swap_chain_extent;
+
+	std::vector<VkImage> swap_chain_images;
 
 	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation" };
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -455,6 +459,13 @@ private:
 
 		if (vkCreateSwapchainKHR(device, &create_info, nullptr, &swap_chain) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create swap chain.");
+
+		vkGetSwapchainImagesKHR(device, swap_chain, &image_count, nullptr);
+		swap_chain_images.resize(image_count);
+		vkGetSwapchainImagesKHR(device, swap_chain, &image_count, swap_chain_images.data());
+
+		swap_chain_image_format = surface_format.format;
+		swap_chain_extent = extent;
 	}
 
 	void cleanup()
