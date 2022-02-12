@@ -46,6 +46,8 @@ private:
 	VkPipelineLayout pipeline_layout;
 	VkPipeline graphics_pipeline;
 	VkCommandPool command_pool;
+	VkSemaphore image_available_semaphore;
+	VkSemaphore render_finished_semaphore;
 
 	std::vector<VkImage> swap_chain_images;
 	std::vector<VkImageView> swap_chain_image_views;
@@ -92,6 +94,7 @@ private:
 		create_framebuffers();
 		create_command_pool();
 		create_command_buffers();
+		create_semaphores();
 	}
 
 	void main_loop()
@@ -99,7 +102,10 @@ private:
 		while (!glfwWindowShouldClose(window))
 		{
 			glfwPollEvents();
+			draw_frame();
 		}
+
+		vkDeviceWaitIdle(device);
 	}
 
 	void create_instance()
@@ -536,6 +542,18 @@ private:
 		render_pass_create_info.subpassCount = 1;
 		render_pass_create_info.pSubpasses = &subpass;
 
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Rendering_and_presentation#page_Subpass-dependencies
+		VkSubpassDependency dependency{};
+		dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+		dependency.dstSubpass = 0;
+		dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.srcAccessMask = 0;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		
+		render_pass_create_info.dependencyCount = 1;
+		render_pass_create_info.pDependencies = &dependency;
+
 		if (vkCreateRenderPass(device, &render_pass_create_info, nullptr, &render_pass) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create render pass!");
 	}
@@ -766,11 +784,93 @@ private:
 
 			if (vkBeginCommandBuffer(command_buffers[i], &begin_info) != VK_SUCCESS)
 				throw std::runtime_error("Failed to begin recording command buffer.");
+
+			begin_render_pass(i);
 		}
+	}
+
+	// https://vulkan-tutorial.com/Drawing_a_triangle/Drawing/Command_buffers#page_Starting-a-render-pass
+	void begin_render_pass(int framebuffer_index)
+	{
+		VkRenderPassBeginInfo render_pass_begin_info{};
+		render_pass_begin_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+		render_pass_begin_info.renderPass = render_pass;
+		render_pass_begin_info.framebuffer = swap_chain_framebuffers[framebuffer_index];
+		render_pass_begin_info.renderArea.offset = {0, 0};
+		render_pass_begin_info.renderArea.extent = swap_chain_extent;
+
+		VkClearValue clear_color = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+		render_pass_begin_info.clearValueCount = 1;
+		render_pass_begin_info.pClearValues = &clear_color;
+
+		vkCmdBeginRenderPass(command_buffers[framebuffer_index], &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
+
+		vkCmdBindPipeline(command_buffers[framebuffer_index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+
+		vkCmdDraw(command_buffers[framebuffer_index], 3, 1, 0, 0);
+
+		vkCmdEndRenderPass(command_buffers[framebuffer_index]);
+
+		if (vkEndCommandBuffer(command_buffers[framebuffer_index]) != VK_SUCCESS)
+			throw std::runtime_error("Failed to record a command buffer.");
+	}
+
+	void create_semaphores()
+	{
+		VkSemaphoreCreateInfo semaphore_info{};
+		semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+		if (vkCreateSemaphore(device, &semaphore_info, nullptr, &image_available_semaphore) != VK_SUCCESS
+		 || vkCreateSemaphore(device, &semaphore_info, nullptr, &render_finished_semaphore) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create semaphores.");
+	}
+
+	void draw_frame()
+	{
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Rendering_and_presentation#page_Synchronization
+		uint32_t image_index;
+		vkAcquireNextImageKHR(device, swap_chain, UINT64_MAX, image_available_semaphore, VK_NULL_HANDLE, &image_index);
+
+		https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Rendering_and_presentation#page_Submitting-the-command-buffer
+		VkSubmitInfo submit_info{};
+		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+		VkSemaphore wait_semaphores[] = { image_available_semaphore };
+		VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+		submit_info.waitSemaphoreCount = 1;
+		submit_info.pWaitSemaphores = wait_semaphores;
+		submit_info.pWaitDstStageMask = wait_stages;
+		submit_info.commandBufferCount = 1;
+		submit_info.pCommandBuffers = &command_buffers[image_index];
+
+		VkSemaphore signal_semaphores[] = { render_finished_semaphore };
+		submit_info.signalSemaphoreCount = 1;
+		submit_info.pSignalSemaphores = signal_semaphores;
+
+		if (vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE) != VK_SUCCESS)
+			throw std::runtime_error("Failed to submit a draw command buffer.");
+
+		VkPresentInfoKHR present_info{};
+		present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+		present_info.waitSemaphoreCount = 1;
+		present_info.pWaitSemaphores = signal_semaphores;
+
+		VkSwapchainKHR swap_chains[] = { swap_chain };
+
+		present_info.swapchainCount = 1;
+		present_info.pSwapchains = swap_chains;
+		present_info.pImageIndices = &image_index;
+		present_info.pResults = nullptr;
+
+		// NOTE: graphics queue is our present queue
+		vkQueuePresentKHR(graphics_queue, &present_info);
 	}
 
 	void cleanup()
 	{
+		vkDestroySemaphore(device, image_available_semaphore, nullptr);
+		vkDestroySemaphore(device, render_finished_semaphore, nullptr);
+
 		vkDestroyCommandPool(device, command_pool, nullptr);
 
 		for (auto framebuffer : swap_chain_framebuffers)
