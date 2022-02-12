@@ -45,9 +45,11 @@ private:
 	VkRenderPass render_pass;
 	VkPipelineLayout pipeline_layout;
 	VkPipeline graphics_pipeline;
+	VkCommandPool command_pool;
 
 	std::vector<VkImage> swap_chain_images;
 	std::vector<VkImageView> swap_chain_image_views;
+	std::vector<VkFramebuffer> swap_chain_framebuffers;
 
 	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation" };
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -86,6 +88,7 @@ private:
 		create_image_views();
 		create_render_pass();
 		create_graphics_pipeline();
+		create_framebuffers();
 	}
 
 	void main_loop()
@@ -699,8 +702,34 @@ private:
 		return shader_module;
 	}
 
+	// https://vulkan-tutorial.com/Drawing_a_triangle/Drawing/Framebuffers
+	void create_framebuffers()
+	{
+		swap_chain_framebuffers.resize(swap_chain_image_views.size());
+
+		for (size_t i = 0; i < swap_chain_image_views.size(); i++)
+		{
+			VkImageView attachments[] = { swap_chain_image_views[i] };
+
+			VkFramebufferCreateInfo framebuffer_create_info{};
+			framebuffer_create_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+			framebuffer_create_info.renderPass = render_pass;
+			framebuffer_create_info.attachmentCount = 1;
+			framebuffer_create_info.pAttachments = attachments;
+			framebuffer_create_info.width = swap_chain_extent.width;
+			framebuffer_create_info.height = swap_chain_extent.height;
+			framebuffer_create_info.layers = 1;
+
+			if (vkCreateFramebuffer(device, &framebuffer_create_info, nullptr, &swap_chain_framebuffers[i]) != VK_SUCCESS)
+				throw std::runtime_error("Failed to create framebuffer.");
+		}
+	}
+
 	void cleanup()
 	{
+		for (auto framebuffer : swap_chain_framebuffers)
+			vkDestroyFramebuffer(device, framebuffer, nullptr);
+
 		vkDestroyPipeline(device, graphics_pipeline, nullptr);
 		
 		vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
