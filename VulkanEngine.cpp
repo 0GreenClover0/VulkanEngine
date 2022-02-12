@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -41,6 +42,7 @@ private:
 	VkSwapchainKHR swap_chain;
 	VkFormat swap_chain_image_format;
 	VkExtent2D swap_chain_extent;
+	VkPipelineLayout pipeline_layout;
 
 	std::vector<VkImage> swap_chain_images;
 	std::vector<VkImageView> swap_chain_image_views;
@@ -80,6 +82,7 @@ private:
 		create_logical_device();
 		create_swap_chain();
 		create_image_views();
+		create_graphics_pipeline();
 	}
 
 	void main_loop()
@@ -489,15 +492,163 @@ private:
 			create_info.subresourceRange.baseMipLevel = 0;
 			create_info.subresourceRange.levelCount = 1;
 			create_info.subresourceRange.baseArrayLayer = 0;
-			create_info.subresourceRange.layerCount = 0;
+			create_info.subresourceRange.layerCount = 1;
 
 			if (vkCreateImageView(device, &create_info, nullptr, &swap_chain_image_views[i]) != VK_SUCCESS)
 				throw std::runtime_error("Failed to create an image view");
 		}
 	}
 
+	void create_graphics_pipeline()
+	{
+		auto vert_shader_code = read_file("shaders/vert.spv");
+		auto frag_shader_code = read_file("shaders/frag.spv");
+
+		// The compilation and linking of the SPIR-V bytecode to machine code for execution by the GPU doesn't happen until the graphics pipeline is created.
+		// That means that we're allowed to destroy the shader modules again as soon as pipeline creation is finished.
+		VkShaderModule vert_shader_module = create_shader_module(vert_shader_code);
+		VkShaderModule frag_shader_module = create_shader_module(frag_shader_code);
+
+		VkPipelineShaderStageCreateInfo vert_shader_stage_create_info{};
+		vert_shader_stage_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		vert_shader_stage_create_info.stage = VK_SHADER_STAGE_VERTEX_BIT;
+		vert_shader_stage_create_info.module = vert_shader_module;
+		vert_shader_stage_create_info.pName = "main";
+
+		VkPipelineShaderStageCreateInfo frag_shader_stage_create_info{};
+		frag_shader_stage_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+		frag_shader_stage_create_info.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+		frag_shader_stage_create_info.module = frag_shader_module;
+		frag_shader_stage_create_info.pName = "main";
+
+		VkPipelineShaderStageCreateInfo shader_stages[] = {vert_shader_stage_create_info, frag_shader_stage_create_info};
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Vertex-input
+		VkPipelineVertexInputStateCreateInfo vertex_input_create_info{};
+		vertex_input_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+		vertex_input_create_info.vertexBindingDescriptionCount = 0;
+		vertex_input_create_info.pVertexBindingDescriptions = nullptr;
+		vertex_input_create_info.vertexAttributeDescriptionCount = 0;
+		vertex_input_create_info.pVertexAttributeDescriptions = nullptr;
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Input-assembly
+		VkPipelineInputAssemblyStateCreateInfo input_assembly_create_info{};
+		input_assembly_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+		input_assembly_create_info.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+		input_assembly_create_info.primitiveRestartEnable = VK_FALSE;
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Viewports-and-scissors
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = (float) swap_chain_extent.width;
+		viewport.height = (float) swap_chain_extent.height;
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 0.0f;
+
+		VkRect2D scissor{};
+		scissor.offset = {0, 0};
+		scissor.extent = swap_chain_extent;
+
+		VkPipelineViewportStateCreateInfo viewport_state_create_info{};
+		viewport_state_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+		viewport_state_create_info.viewportCount = 1;
+		viewport_state_create_info.pViewports = &viewport;
+		viewport_state_create_info.scissorCount = 1;
+		viewport_state_create_info.pScissors = &scissor;
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Rasterizer
+		VkPipelineRasterizationStateCreateInfo rasterizer_create_info{};
+		rasterizer_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+		rasterizer_create_info.depthClampEnable = VK_FALSE;
+		rasterizer_create_info.rasterizerDiscardEnable = VK_FALSE;
+		rasterizer_create_info.polygonMode = VK_POLYGON_MODE_FILL;
+		rasterizer_create_info.lineWidth = 1.0f;
+		rasterizer_create_info.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizer_create_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizer_create_info.depthBiasEnable = VK_FALSE;
+		rasterizer_create_info.depthBiasConstantFactor = 0.0f;
+		rasterizer_create_info.depthBiasClamp = 0.0f;
+		rasterizer_create_info.depthBiasSlopeFactor = 0.0f;
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Multisampling
+		VkPipelineMultisampleStateCreateInfo multisampling_create_info{};
+		multisampling_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+		multisampling_create_info.sampleShadingEnable = VK_FALSE;
+		multisampling_create_info.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+		multisampling_create_info.minSampleShading = 1.0f;
+		multisampling_create_info.pSampleMask = nullptr;
+		multisampling_create_info.alphaToCoverageEnable = VK_FALSE;
+		multisampling_create_info.alphaToOneEnable = VK_FALSE;
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Depth-and-stencil-testing
+		// Nothing
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Color-blending
+		VkPipelineColorBlendAttachmentState color_blend_attachment{};
+		color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+		color_blend_attachment.blendEnable = VK_TRUE;
+		// Alpha blending
+		color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+		color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+		color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
+		color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+		color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+		color_blend_attachment.alphaBlendOp = VK_BLEND_OP_ADD;
+
+		// We are not using this
+		VkPipelineColorBlendStateCreateInfo color_blending{};
+		color_blending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+		color_blending.logicOpEnable = VK_FALSE;
+		color_blending.logicOp = VK_LOGIC_OP_COPY; // Optional
+		color_blending.attachmentCount = 1;
+		color_blending.pAttachments = &color_blend_attachment;
+		color_blending.blendConstants[0] = 0.0f; // Optional
+		color_blending.blendConstants[1] = 0.0f; // Optional
+		color_blending.blendConstants[2] = 0.0f; // Optional
+		color_blending.blendConstants[3] = 0.0f; // Optional
+
+		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Pipeline-layout
+		VkPipelineLayoutCreateInfo pipeline_layout_create_info{};
+		pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+		pipeline_layout_create_info.setLayoutCount = 0;
+		pipeline_layout_create_info.pSetLayouts = nullptr;
+		pipeline_layout_create_info.pushConstantRangeCount = 0;
+		pipeline_layout_create_info.pPushConstantRanges = nullptr;
+
+		if (vkCreatePipelineLayout(device, &pipeline_layout_create_info, nullptr, &pipeline_layout) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create pipeline layout.");
+
+		
+
+		vkDestroyShaderModule(device, vert_shader_module, nullptr);
+		vkDestroyShaderModule(device, frag_shader_module, nullptr);
+	}
+
+	VkShaderModule create_shader_module(const std::vector<char>& code)
+	{
+		VkShaderModuleCreateInfo create_info{};
+		create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+		create_info.codeSize = code.size();
+
+		// Size of the bytecode is specified in bytes, but the bytecode pointer is a uint32_t pointer rather than a char pointer.
+		// Therefore we will need to cast the pointer with reinterpret_cast as shown below. When performing a cast like this, we also need to ensure that
+		// the data satisfies the alignment requirements of uint32_t. Lucky for us, the data is stored in an std::vector where
+		// the default allocator already ensures that the data satisfies the worst case alignment requirements.
+		// NOTE: what does it mean?
+		create_info.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+		VkShaderModule shader_module;
+		if (vkCreateShaderModule(device, &create_info, nullptr, &shader_module) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create shader module.");
+
+		return shader_module;
+	}
+
 	void cleanup()
 	{
+		vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+
 		for (auto image_view : swap_chain_image_views)
 			vkDestroyImageView(device, image_view, nullptr);
 
@@ -513,6 +664,26 @@ private:
 		glfwDestroyWindow(window);
 
 		glfwTerminate();
+	}
+
+	static std::vector<char> read_file(const std::string& filename)
+	{
+		// We start reading at the end of the file so we can easily determine the size of the file and allocate a buffer
+		std::ifstream input(filename, std::ios::ate | std::ios::binary);
+
+		if (!input.is_open())
+			throw std::runtime_error("Failed to open the file!");
+
+		size_t file_size = (size_t) input.tellg();
+		std::vector<char> buffer(file_size);
+
+		input.seekg(0);
+		input.read(buffer.data(), file_size);
+
+		input.close();
+
+		std::cout << buffer.size() << std::endl;
+		return buffer;
 	}
 };
 
