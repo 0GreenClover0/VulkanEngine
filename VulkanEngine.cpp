@@ -50,6 +50,7 @@ private:
 	std::vector<VkImage> swap_chain_images;
 	std::vector<VkImageView> swap_chain_image_views;
 	std::vector<VkFramebuffer> swap_chain_framebuffers;
+	std::vector<VkCommandBuffer> command_buffers;
 
 	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation" };
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
@@ -89,6 +90,8 @@ private:
 		create_render_pass();
 		create_graphics_pipeline();
 		create_framebuffers();
+		create_command_pool();
+		create_command_buffers();
 	}
 
 	void main_loop()
@@ -725,8 +728,51 @@ private:
 		}
 	}
 
+	// https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Command_buffers#page_Command-pools
+	void create_command_pool()
+	{
+		QueueFamilyIndices queue_family_indices;
+		find_queue_indices(physical_device, queue_family_indices);
+
+		VkCommandPoolCreateInfo pool_create_info{};
+		pool_create_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+		pool_create_info.queueFamilyIndex = queue_family_indices.graphics_family;
+		pool_create_info.flags = 0;
+
+		if (vkCreateCommandPool(device, &pool_create_info, nullptr, &command_pool) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create command pool.");
+	}
+
+	// https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Command_buffers#page_Command-buffer-allocation
+	void create_command_buffers()
+	{
+		command_buffers.resize(swap_chain_framebuffers.size());
+
+		VkCommandBufferAllocateInfo alloc_create_info{};
+		alloc_create_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		alloc_create_info.commandPool = command_pool;
+		alloc_create_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		alloc_create_info.commandBufferCount = (uint32_t) command_buffers.size();
+
+		if (vkAllocateCommandBuffers(device, &alloc_create_info, command_buffers.data()) != VK_SUCCESS)
+			throw std::runtime_error("Failed to allocate command buffers.");
+
+		for (size_t i = 0; i < command_buffers.size(); i++)
+		{
+			VkCommandBufferBeginInfo begin_info{};
+			begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+			begin_info.flags = 0;
+			begin_info.pInheritanceInfo = nullptr;
+
+			if (vkBeginCommandBuffer(command_buffers[i], &begin_info) != VK_SUCCESS)
+				throw std::runtime_error("Failed to begin recording command buffer.");
+		}
+	}
+
 	void cleanup()
 	{
+		vkDestroyCommandPool(device, command_pool, nullptr);
+
 		for (auto framebuffer : swap_chain_framebuffers)
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
 
