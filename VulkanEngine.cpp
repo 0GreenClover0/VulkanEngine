@@ -14,6 +14,8 @@ class App {
 
 public:
 
+	bool was_window_resized() { return framebuffer_resized; }
+
 	const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 	const uint32_t WIDTH = 800;
 	const uint32_t HEIGHT = 600;
@@ -115,6 +117,7 @@ private:
 			glfwWaitEvents();
 		}
 
+		// Wait until old swap chain is not being used
 		vkDeviceWaitIdle(device);
 
 		cleanup_swap_chain();
@@ -124,7 +127,12 @@ private:
 		create_render_pass();
 		create_graphics_pipeline();
 		create_framebuffers();
-		create_command_buffers();
+
+		if (swap_chain_images.size() != command_buffers.size())
+		{
+			vkFreeCommandBuffers(device, command_pool, static_cast<uint32_t>(command_buffers.size()), command_buffers.data());
+			create_command_buffers();
+		}
 	}
 
 	void main_loop()
@@ -785,7 +793,7 @@ private:
 		VkCommandPoolCreateInfo pool_create_info{};
 		pool_create_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
 		pool_create_info.queueFamilyIndex = queue_family_indices.graphics_family;
-		pool_create_info.flags = 0;
+		pool_create_info.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT | VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 
 		if (vkCreateCommandPool(device, &pool_create_info, nullptr, &command_pool) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create command pool.");
@@ -804,19 +812,19 @@ private:
 
 		if (vkAllocateCommandBuffers(device, &alloc_create_info, command_buffers.data()) != VK_SUCCESS)
 			throw std::runtime_error("Failed to allocate command buffers.");
+	}
 
-		for (size_t i = 0; i < command_buffers.size(); i++)
-		{
-			VkCommandBufferBeginInfo begin_info{};
-			begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-			begin_info.flags = 0;
-			begin_info.pInheritanceInfo = nullptr;
+	void record_command_buffer(int image_index)
+	{
+		VkCommandBufferBeginInfo begin_info{};
+		begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		begin_info.flags = 0;
+		begin_info.pInheritanceInfo = nullptr;
 
-			if (vkBeginCommandBuffer(command_buffers[i], &begin_info) != VK_SUCCESS)
-				throw std::runtime_error("Failed to begin recording command buffer.");
+		if (vkBeginCommandBuffer(command_buffers[image_index], &begin_info) != VK_SUCCESS)
+			throw std::runtime_error("Failed to begin recording command buffer.");
 
-			begin_render_pass(i);
-		}
+		begin_render_pass(image_index);
 	}
 
 	// https://vulkan-tutorial.com/Drawing_a_triangle/Drawing/Command_buffers#page_Starting-a-render-pass
@@ -883,6 +891,8 @@ private:
 		else if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR)
 			throw std::runtime_error("Failed to acquire swap chain image.");
 
+		record_command_buffer(image_index);
+
 		// Check if the previous frame is using the image (i.e. there is its fence to wait on)
 		if (images_in_flight[image_index] != VK_NULL_HANDLE)
 			vkWaitForFences(device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
@@ -941,8 +951,6 @@ private:
 	{
 		for (size_t i = 0; i < swap_chain_framebuffers.size(); i++)
 			vkDestroyFramebuffer(device, swap_chain_framebuffers[i], nullptr);
-
-		vkFreeCommandBuffers(device, command_pool, static_cast<uint32_t>(command_buffers.size()), command_buffers.data());
 
 		vkDestroyPipeline(device, graphics_pipeline, nullptr);
 		
@@ -1003,7 +1011,6 @@ private:
 
 		input.close();
 
-		std::cout << buffer.size() << std::endl;
 		return buffer;
 	}
 };
