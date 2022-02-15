@@ -42,7 +42,8 @@ private:
 	VkPhysicalDevice physical_device = VK_NULL_HANDLE;
 	VkQueue graphics_queue;
 	VkSurfaceKHR surface;
-	VkSwapchainKHR swap_chain;
+	VkSwapchainKHR swap_chain = VK_NULL_HANDLE;
+	VkSwapchainKHR new_swap_chain = VK_NULL_HANDLE;
 	VkFormat swap_chain_image_format;
 	VkExtent2D swap_chain_extent;
 	VkRenderPass render_pass;
@@ -117,12 +118,7 @@ private:
 			glfwWaitEvents();
 		}
 
-		// Wait until old swap chain is not being used
-		vkDeviceWaitIdle(device);
-
-		cleanup_swap_chain();
-
-		create_swap_chain();
+		create_swap_chain(true);
 		create_image_views();
 		create_render_pass();
 		create_graphics_pipeline();
@@ -473,7 +469,7 @@ private:
 	}
 
 	// https://vulkan-tutorial.com/Drawing_a_triangle/Presentation/Swap_chain
-	void create_swap_chain()
+	void create_swap_chain(bool recreation = false)
 	{
 		SwapChainSupportDetails swap_chain_support_details = query_swap_chain_support(physical_device);
 
@@ -513,10 +509,19 @@ private:
 		create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 		create_info.presentMode = present_mode;
 		create_info.clipped = VK_TRUE;
-		create_info.oldSwapchain = VK_NULL_HANDLE;
+		create_info.oldSwapchain = swap_chain;
 
-		if (vkCreateSwapchainKHR(device, &create_info, nullptr, &swap_chain) != VK_SUCCESS)
+		if (vkCreateSwapchainKHR(device, &create_info, nullptr, &new_swap_chain) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create swap chain.");
+
+		if (recreation)
+		{
+			vkDeviceWaitIdle(device);
+			cleanup_swap_chain();
+		}
+
+		swap_chain = new_swap_chain;
+		new_swap_chain = VK_NULL_HANDLE;
 
 		vkGetSwapchainImagesKHR(device, swap_chain, &image_count, nullptr);
 		swap_chain_images.resize(image_count);
