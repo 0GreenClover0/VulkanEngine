@@ -41,6 +41,7 @@ private:
 	VkDevice device;
 	VkPhysicalDevice physical_device = VK_NULL_HANDLE;
 	VkQueue graphics_queue;
+	VkQueue present_queue;
 	VkSurfaceKHR surface;
 	VkSwapchainKHR swap_chain = VK_NULL_HANDLE;
 	VkSwapchainKHR new_swap_chain = VK_NULL_HANDLE;
@@ -69,6 +70,7 @@ private:
 	struct QueueFamilyIndices
 	{
 		uint32_t graphics_family;
+		uint32_t present_family;
 	};
 
 	struct SwapChainSupportDetails
@@ -311,28 +313,34 @@ private:
 		vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_families_properties.data());
 
 		uint32_t i = 0;
-		bool appropriate_family_found = false;
+		bool graphics_family_found = false;
+		bool present_family_found = false;
 		for (const auto& queue_family_properties : queue_families_properties)
 		{
 			// We want a device that can draw AND display it to the surface
 			if (queue_family_properties.queueFlags & VK_QUEUE_GRAPHICS_BIT)
 			{
-				VkBool32 surface_supported = false;
-				vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &surface_supported);
-
-				if (!surface_supported)
-					continue;
-
 				new_indices.graphics_family = i;
-				appropriate_family_found = true;
-				break;
+				graphics_family_found = true;
 			}
+
+			VkBool32 surface_supported = false;
+			vkGetPhysicalDeviceSurfaceSupportKHR(device, i, surface, &surface_supported);
+
+			if (surface_supported)
+			{
+				new_indices.present_family = i;
+				present_family_found = true;
+			}
+
+			if (graphics_family_found && present_family_found)
+				break;
 
 			i++;
 		}
 
 		indices = new_indices;
-		return appropriate_family_found;
+		return graphics_family_found && present_family_found;
 	}
 
 	bool check_device_extensions(VkPhysicalDevice device)
@@ -358,20 +366,26 @@ private:
 		QueueFamilyIndices indices{};
 		find_queue_indices(physical_device, indices);
 
-		VkDeviceQueueCreateInfo queue_create_info{};
-		queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-		queue_create_info.queueFamilyIndex = indices.graphics_family;
-		queue_create_info.queueCount = 1;
+		std::vector<VkDeviceQueueCreateInfo> queue_create_infos{};
+		std::set<uint32_t> unique_queue_families = { indices.graphics_family, indices.present_family };
 
 		float queue_priority = 1.0;
-		queue_create_info.pQueuePriorities = &queue_priority;
+		for (const uint32_t unique_queue_family : unique_queue_families)
+		{
+			VkDeviceQueueCreateInfo queue_create_info{};
+			queue_create_info.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+			queue_create_info.queueFamilyIndex = unique_queue_family;
+			queue_create_info.queueCount = 1;
+			queue_create_info.pQueuePriorities = &queue_priority;
+			queue_create_infos.push_back(queue_create_info);
+		}
 
 		VkPhysicalDeviceFeatures device_features{};
 
 		VkDeviceCreateInfo create_info{};
 		create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-		create_info.pQueueCreateInfos = &queue_create_info;
-		create_info.queueCreateInfoCount = 1;
+		create_info.queueCreateInfoCount = static_cast<uint32_t>(queue_create_infos.size());
+		create_info.pQueueCreateInfos = queue_create_infos.data();
 		create_info.pEnabledFeatures = &device_features;
 
 		// Enable extensions (like VK_KHR_swapchain)
@@ -392,6 +406,7 @@ private:
 			throw std::runtime_error("Failed to create a logical device.");
 
 		vkGetDeviceQueue(device, indices.graphics_family, 0, &graphics_queue);
+		vkGetDeviceQueue(device, indices.present_family, 0, &present_queue);
 	}
 
 	// Just checking if a swap chain is available is not sufficient, because it may not actually be compatible with our window surface
@@ -502,9 +517,23 @@ private:
 		// and use a memory operation to transfer the rendered image to a swap chain image.
 		create_info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
 
-		create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-		create_info.queueFamilyIndexCount = 0;
-		create_info.pQueueFamilyIndices = nullptr;
+		QueueFamilyIndices indices;
+		find_queue_indices(physical_device, indices);
+		uint32_t queueFamilyIndices[] = {indices.graphics_family, indices.present_family};
+
+        if (indices.graphics_family != indices.present_family)
+		{
+            create_info.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+            create_info.queueFamilyIndexCount = 2;
+            create_info.pQueueFamilyIndices = queueFamilyIndices;
+        }
+		else
+		{
+            create_info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+			create_info.queueFamilyIndexCount = 0;
+			create_info.pQueueFamilyIndices = nullptr;
+        }
+
 		create_info.preTransform = swap_chain_support_details.capabilities.currentTransform;
 		create_info.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
 		create_info.presentMode = present_mode;
@@ -951,8 +980,7 @@ private:
 		present_info.pImageIndices = &image_index;
 		present_info.pResults = nullptr;
 
-		// NOTE: graphics queue is our present queue
-		result = vkQueuePresentKHR(graphics_queue, &present_info);
+		result = vkQueuePresentKHR(present_queue, &present_info);
 
 		if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR || framebuffer_resized)
 		{
