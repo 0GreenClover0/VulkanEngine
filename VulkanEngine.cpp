@@ -121,7 +121,7 @@ private:
 		create_swap_chain(true);
 		create_image_views();
 		create_render_pass();
-		create_graphics_pipeline();
+		//create_graphics_pipeline();
 		create_framebuffers();
 
 		if (swap_chain_images.size() != command_buffers.size())
@@ -640,24 +640,14 @@ private:
 		input_assembly_create_info.primitiveRestartEnable = VK_FALSE;
 
 		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Viewports-and-scissors
-		VkViewport viewport{};
-		viewport.x = 0.0f;
-		viewport.y = 0.0f;
-		viewport.width = (float) swap_chain_extent.width;
-		viewport.height = (float) swap_chain_extent.height;
-		viewport.minDepth = 0.0f;
-		viewport.maxDepth = 0.0f;
-
-		VkRect2D scissor{};
-		scissor.offset = {0, 0};
-		scissor.extent = swap_chain_extent;
+		// We are using dynamic viewport and scissors so we don't need to recreate graphics pipeline & layout when recreating swap chain
 
 		VkPipelineViewportStateCreateInfo viewport_state_create_info{};
 		viewport_state_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
 		viewport_state_create_info.viewportCount = 1;
-		viewport_state_create_info.pViewports = &viewport;
+		viewport_state_create_info.pViewports = nullptr;
 		viewport_state_create_info.scissorCount = 1;
-		viewport_state_create_info.pScissors = &scissor;
+		viewport_state_create_info.pScissors = nullptr;
 
 		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Rasterizer
 		VkPipelineRasterizationStateCreateInfo rasterizer_create_info{};
@@ -721,6 +711,14 @@ private:
 		if (vkCreatePipelineLayout(device, &pipeline_layout_create_info, nullptr, &pipeline_layout) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create pipeline layout.");
 
+		std::vector<VkDynamicState> dynamic_states = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+		VkPipelineDynamicStateCreateInfo dynamic_state_info{};
+		dynamic_state_info.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+		dynamic_state_info.dynamicStateCount = static_cast<uint32_t>(dynamic_states.size());
+		dynamic_state_info.pDynamicStates = dynamic_states.data();
+		dynamic_state_info.flags = 0;
+
 		VkGraphicsPipelineCreateInfo pipeline_create_info{};
 		pipeline_create_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 		pipeline_create_info.stageCount = 2;
@@ -732,7 +730,7 @@ private:
 		pipeline_create_info.pMultisampleState = &multisampling_create_info;
 		pipeline_create_info.pDepthStencilState = nullptr;
 		pipeline_create_info.pColorBlendState = &color_blending;
-		pipeline_create_info.pDynamicState = nullptr;
+		pipeline_create_info.pDynamicState = &dynamic_state_info;
 		pipeline_create_info.layout = pipeline_layout;
 		pipeline_create_info.renderPass = render_pass;
 		pipeline_create_info.subpass = 0;
@@ -848,6 +846,21 @@ private:
 
 		vkCmdBeginRenderPass(command_buffers[framebuffer_index], &render_pass_begin_info, VK_SUBPASS_CONTENTS_INLINE);
 
+		VkViewport viewport{};
+		viewport.x = 0.0f;
+		viewport.y = 0.0f;
+		viewport.width = static_cast<float>(swap_chain_extent.width);
+		viewport.height = static_cast<float>(swap_chain_extent.height);
+		viewport.minDepth = 0.0f;
+		viewport.maxDepth = 1.0f;
+
+		VkRect2D scissor{};
+		scissor.offset = {0, 0};
+		scissor.extent = swap_chain_extent;
+
+		vkCmdSetViewport(command_buffers[framebuffer_index], 0, 1, &viewport);
+		vkCmdSetScissor(command_buffers[framebuffer_index], 0, 1, &scissor);
+
 		vkCmdBindPipeline(command_buffers[framebuffer_index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
 
 		vkCmdDraw(command_buffers[framebuffer_index], 3, 1, 0, 0);
@@ -957,9 +970,9 @@ private:
 		for (size_t i = 0; i < swap_chain_framebuffers.size(); i++)
 			vkDestroyFramebuffer(device, swap_chain_framebuffers[i], nullptr);
 
-		vkDestroyPipeline(device, graphics_pipeline, nullptr);
+		//vkDestroyPipeline(device, graphics_pipeline, nullptr);
 		
-		vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+		//vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
 
 		vkDestroyRenderPass(device, render_pass, nullptr);
 
@@ -971,7 +984,19 @@ private:
 
 	void cleanup()
 	{
-		cleanup_swap_chain();
+		for (size_t i = 0; i < swap_chain_framebuffers.size(); i++)
+			vkDestroyFramebuffer(device, swap_chain_framebuffers[i], nullptr);
+
+		vkDestroyPipeline(device, graphics_pipeline, nullptr);
+		
+		vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
+
+		vkDestroyRenderPass(device, render_pass, nullptr);
+
+		for (size_t i = 0; i < swap_chain_image_views.size(); i++)
+			vkDestroyImageView(device, swap_chain_image_views[i], nullptr);
+
+		vkDestroySwapchainKHR(device, swap_chain, nullptr);
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 		{
