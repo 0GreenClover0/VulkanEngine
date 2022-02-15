@@ -87,6 +87,8 @@ private:
 	VkCommandPool command_pool;
 	VkBuffer vertex_buffer;
 	VkDeviceMemory vertex_buffer_memory;
+	VkBuffer index_buffer;
+	VkDeviceMemory index_buffer_memory;
 
 	std::vector<VkSemaphore> image_available_semaphores;
 	std::vector<VkSemaphore> render_finished_semaphores;
@@ -104,9 +106,14 @@ private:
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 	const std::vector<Vertex> vertices = {
-    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
-    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
-    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
+		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
+		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
+		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+	};
+
+	const std::vector<uint32_t> indices = {
+		0, 1, 2, 2, 3, 0
 	};
 
 	struct QueueFamilyIndices
@@ -148,6 +155,7 @@ private:
 		create_framebuffers();
 		create_command_pool();
 		create_vertex_buffer();
+		create_index_buffer();
 		create_command_buffers();
 		create_sync_objects();
 	}
@@ -887,8 +895,16 @@ private:
 		hardware like an NVIDIA GTX 1080. The right way to allocate memory for a large number of objects
 		at the same time is to create a custom allocator that splits up a single allocation among many
 		different objects by using the offset parameters that we've seen in many functions.
+
+		The previous chapter already mentioned that you should allocate multiple resources like buffers
+		from a single memory allocation, but in fact you should go a step further. Driver developers recommend
+		that you also store multiple buffers, like the vertex and index buffer, into a single VkBuffer and use offsets
+		in commands like vkCmdBindVertexBuffers. The advantage is that your data is more cache friendly in that case,
+		because it's closer together. It is even possible to reuse the same chunk of memory for multiple resources
+		if they are not used during the same render operations, provided that their data is refreshed, of course.
+		This is known as aliasing and some Vulkan functions have explicit flags to specify that you want to do this.
 		*/
-	
+
 		VkDeviceSize buffer_size = sizeof(vertices[0]) * vertices.size();
 		VkBuffer staging_buffer;
 		VkDeviceMemory staging_buffer_memory;
@@ -902,6 +918,26 @@ private:
 		create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_buffer, vertex_buffer_memory);
 
 		copy_buffer(staging_buffer, vertex_buffer, buffer_size);
+
+		vkDestroyBuffer(device, staging_buffer, nullptr);
+		vkFreeMemory(device, staging_buffer_memory, nullptr);
+	}
+
+	void create_index_buffer()
+	{
+		VkDeviceSize buffer_size = sizeof(indices[0]) * indices.size();
+		VkBuffer staging_buffer;
+		VkDeviceMemory staging_buffer_memory;
+		create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
+
+		void* data;
+		vkMapMemory(device, staging_buffer_memory, 0, buffer_size, 0, &data);
+		memcpy(data, indices.data(), (size_t) buffer_size);
+		vkUnmapMemory(device, staging_buffer_memory);
+
+		create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, index_buffer, index_buffer_memory);
+
+		copy_buffer(staging_buffer, index_buffer, buffer_size);
 
 		vkDestroyBuffer(device, staging_buffer, nullptr);
 		vkFreeMemory(device, staging_buffer_memory, nullptr);
@@ -1058,7 +1094,10 @@ private:
 		VkDeviceSize offsets[] = {0};
 		vkCmdBindVertexBuffers(command_buffers[framebuffer_index], 0, 1, vertex_buffers, offsets);
 
-		vkCmdDraw(command_buffers[framebuffer_index], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+		vkCmdBindIndexBuffer(command_buffers[framebuffer_index], index_buffer, 0, VK_INDEX_TYPE_UINT32);
+
+		//vkCmdDraw(command_buffers[framebuffer_index], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+		vkCmdDrawIndexed(command_buffers[framebuffer_index], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 		vkCmdEndRenderPass(command_buffers[framebuffer_index]);
 
@@ -1192,8 +1231,10 @@ private:
 
 		vkDestroySwapchainKHR(device, swap_chain, nullptr);
 
-		vkDestroyBuffer(device, vertex_buffer, nullptr);
+		vkDestroyBuffer(device, index_buffer, nullptr);
+		vkFreeMemory(device, index_buffer_memory, nullptr);
 
+		vkDestroyBuffer(device, vertex_buffer, nullptr);
 		vkFreeMemory(device, vertex_buffer_memory, nullptr);
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
