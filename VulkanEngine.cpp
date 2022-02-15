@@ -1,7 +1,10 @@
 ﻿#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#include <glm/glm.hpp>
+
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -9,6 +12,37 @@
 #include <set>
 #include <stdexcept>
 #include <vector>
+
+struct Vertex {
+	glm::vec2 pos;
+	glm::vec3 color;
+
+	static VkVertexInputBindingDescription get_binding_description()
+	{
+		VkVertexInputBindingDescription binding_description{};
+		binding_description.binding = 0;
+		binding_description.stride = sizeof(Vertex);
+		binding_description.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+		return binding_description;
+	}
+
+	static std::array<VkVertexInputAttributeDescription, 2> get_attribute_descriptions()
+	{
+		std::array<VkVertexInputAttributeDescription, 2> attribute_descriptions{};
+		attribute_descriptions[0].binding = 0;
+		attribute_descriptions[0].location = 0;
+		attribute_descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+		attribute_descriptions[0].offset = offsetof(Vertex, pos);
+
+		attribute_descriptions[1].binding = 0;
+		attribute_descriptions[1].location = 1;
+		attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+		attribute_descriptions[1].offset = offsetof(Vertex, color);
+
+		return attribute_descriptions;
+	}
+};
 
 class App {
 
@@ -51,6 +85,8 @@ private:
 	VkPipelineLayout pipeline_layout;
 	VkPipeline graphics_pipeline;
 	VkCommandPool command_pool;
+	VkBuffer vertex_buffer;
+	VkDeviceMemory vertex_buffer_memory;
 
 	std::vector<VkSemaphore> image_available_semaphores;
 	std::vector<VkSemaphore> render_finished_semaphores;
@@ -66,6 +102,12 @@ private:
 
 	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation" };
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+
+	const std::vector<Vertex> vertices = {
+    {{0.0f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}}
+	};
 
 	struct QueueFamilyIndices
 	{
@@ -105,6 +147,7 @@ private:
 		create_graphics_pipeline();
 		create_framebuffers();
 		create_command_pool();
+		create_vertex_buffer();
 		create_command_buffers();
 		create_sync_objects();
 	}
@@ -122,8 +165,8 @@ private:
 
 		create_swap_chain(true);
 		create_image_views();
+		// TODO: We can sometimes use the old render pass
 		create_render_pass();
-		//create_graphics_pipeline();
 		create_framebuffers();
 
 		if (swap_chain_images.size() != command_buffers.size())
@@ -654,13 +697,16 @@ private:
 
 		VkPipelineShaderStageCreateInfo shader_stages[] = {vert_shader_stage_create_info, frag_shader_stage_create_info};
 
+		auto binding_desc = Vertex::get_binding_description();
+		auto attribute_descs = Vertex::get_attribute_descriptions();
+
 		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Vertex-input
 		VkPipelineVertexInputStateCreateInfo vertex_input_create_info{};
 		vertex_input_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertex_input_create_info.vertexBindingDescriptionCount = 0;
-		vertex_input_create_info.pVertexBindingDescriptions = nullptr;
-		vertex_input_create_info.vertexAttributeDescriptionCount = 0;
-		vertex_input_create_info.pVertexAttributeDescriptions = nullptr;
+		vertex_input_create_info.vertexBindingDescriptionCount = 1;
+		vertex_input_create_info.pVertexBindingDescriptions = &binding_desc;
+		vertex_input_create_info.vertexAttributeDescriptionCount = static_cast<uint32_t>(attribute_descs.size());
+		vertex_input_create_info.pVertexAttributeDescriptions = attribute_descs.data();
 
 		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Input-assembly
 		VkPipelineInputAssemblyStateCreateInfo input_assembly_create_info{};
@@ -831,6 +877,121 @@ private:
 			throw std::runtime_error("Failed to create command pool.");
 	}
 
+	// https://vulkan-tutorial.com/en/Vertex_buffers/Vertex_buffer_creation#page_Buffer-creation
+	void create_vertex_buffer()
+	{
+		/*
+		It should be noted that in a real world application, you're not supposed to actually call vkAllocateMemory
+		for every individual buffer. The maximum number of simultaneous memory allocations is limited
+		by the maxMemoryAllocationCount physical device limit, which may be as low as 4096 even on high end
+		hardware like an NVIDIA GTX 1080. The right way to allocate memory for a large number of objects
+		at the same time is to create a custom allocator that splits up a single allocation among many
+		different objects by using the offset parameters that we've seen in many functions.
+		*/
+	
+		VkDeviceSize buffer_size = sizeof(vertices[0]) * vertices.size();
+		VkBuffer staging_buffer;
+		VkDeviceMemory staging_buffer_memory;
+		create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, staging_buffer, staging_buffer_memory);
+
+		void* data;
+		vkMapMemory(device, staging_buffer_memory, 0, buffer_size, 0, &data);
+		memcpy(data, vertices.data(), (size_t) buffer_size);
+		vkUnmapMemory(device, staging_buffer_memory);
+
+		create_buffer(buffer_size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertex_buffer, vertex_buffer_memory);
+
+		copy_buffer(staging_buffer, vertex_buffer, buffer_size);
+
+		vkDestroyBuffer(device, staging_buffer, nullptr);
+		vkFreeMemory(device, staging_buffer_memory, nullptr);
+	}
+
+	void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage_flags, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& buffer_memory)
+	{
+		VkBufferCreateInfo buffer_info{};
+		buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+		buffer_info.size = size;
+		buffer_info.usage = usage_flags;
+		buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+		if (vkCreateBuffer(device, &buffer_info, nullptr, &buffer) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create vertex buffer.");
+
+		VkMemoryRequirements mem_requirements;
+		vkGetBufferMemoryRequirements(device, buffer, &mem_requirements);
+
+		VkMemoryAllocateInfo alloc_info{};
+		alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+		alloc_info.allocationSize = mem_requirements.size;
+		alloc_info.memoryTypeIndex = find_memory_type(mem_requirements.memoryTypeBits, properties);
+
+		if (vkAllocateMemory(device, &alloc_info, nullptr, &buffer_memory) != VK_SUCCESS)
+			throw std::runtime_error("Failed to allocate vertex buffer memory.");
+
+		vkBindBufferMemory(device, buffer, buffer_memory, 0);
+	}
+
+	void copy_buffer(VkBuffer src_buffer, VkBuffer dst_buffer, VkDeviceSize size)
+	{
+		/* TODO: You may wish to create a separate command pool for these kinds of short-lived buffers,
+		because the implementation may be able to apply memory allocation optimizations.
+		You should use the VK_COMMAND_POOL_CREATE_TRANSIENT_BIT flag during command pool generation in that case.*/
+
+		VkCommandBufferAllocateInfo alloc_info{};
+		alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		alloc_info.commandPool = command_pool;
+		alloc_info.commandBufferCount = 1;
+
+		VkCommandBuffer command_buffer;
+		vkAllocateCommandBuffers(device, &alloc_info, &command_buffer);
+
+		VkCommandBufferBeginInfo begin_info{};
+		begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+		vkBeginCommandBuffer(command_buffer, &begin_info);
+
+		VkBufferCopy copy_region{};
+		copy_region.srcOffset = 0;
+		copy_region.dstOffset = 0;
+		copy_region.size = size;
+		vkCmdCopyBuffer(command_buffer, src_buffer, dst_buffer, 1, &copy_region);
+
+		vkEndCommandBuffer(command_buffer);
+
+		VkSubmitInfo submit_info{};
+		submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submit_info.commandBufferCount = 1;
+		submit_info.pCommandBuffers = &command_buffer;
+
+		vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+
+		/* There are again two possible ways to wait on this transfer to complete.
+		   We could use a fence and wait with vkWaitForFences, or simply wait for the transfer queue to become idle with vkQueueWaitIdle.
+		   A fence would allow you to schedule multiple transfers simultaneously and wait for all of them complete,
+		   instead of executing one at a time. That may give the driver more opportunities to optimize. */
+
+		vkQueueWaitIdle(graphics_queue);
+
+		vkFreeCommandBuffers(device, command_pool, 1, &command_buffer);
+	}
+
+	uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties)
+	{
+		VkPhysicalDeviceMemoryProperties mem_properties;
+		vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_properties);
+
+		for (uint32_t i = 0; i < mem_properties.memoryTypeCount; i++)
+		{
+			if (type_filter & (1 << i) && (mem_properties.memoryTypes[i].propertyFlags & properties) == properties)
+				return i;
+		}
+
+		throw std::runtime_error("Failed to find sustainable memory type.");
+	}
+
 	// https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Command_buffers#page_Command-buffer-allocation
 	void create_command_buffers()
 	{
@@ -846,6 +1007,7 @@ private:
 			throw std::runtime_error("Failed to allocate command buffers.");
 	}
 
+	// TODO: Abstract this?
 	void record_command_buffer(int image_index)
 	{
 		VkCommandBufferBeginInfo begin_info{};
@@ -892,7 +1054,11 @@ private:
 
 		vkCmdBindPipeline(command_buffers[framebuffer_index], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
 
-		vkCmdDraw(command_buffers[framebuffer_index], 3, 1, 0, 0);
+		VkBuffer vertex_buffers[] = {vertex_buffer};
+		VkDeviceSize offsets[] = {0};
+		vkCmdBindVertexBuffers(command_buffers[framebuffer_index], 0, 1, vertex_buffers, offsets);
+
+		vkCmdDraw(command_buffers[framebuffer_index], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 
 		vkCmdEndRenderPass(command_buffers[framebuffer_index]);
 
@@ -1025,6 +1191,10 @@ private:
 			vkDestroyImageView(device, swap_chain_image_views[i], nullptr);
 
 		vkDestroySwapchainKHR(device, swap_chain, nullptr);
+
+		vkDestroyBuffer(device, vertex_buffer, nullptr);
+
+		vkFreeMemory(device, vertex_buffer_memory, nullptr);
 
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; i++)
 		{
