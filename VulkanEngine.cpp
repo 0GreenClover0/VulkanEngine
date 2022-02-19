@@ -1,10 +1,15 @@
 ﻿#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define GLM_FORCE_RADIANS
+// https://vulkan-tutorial.com/en/Uniform_buffers/Descriptor_pool_and_sets#page_Alignment-requirements
+// #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -42,6 +47,13 @@ struct Vertex {
 
 		return attribute_descriptions;
 	}
+};
+
+struct Uniform_Buffer_Object
+{
+	alignas(16) glm::mat4 model;
+	alignas(16) glm::mat4 view;
+	alignas(16) glm::mat4 proj;
 };
 
 class App {
@@ -82,6 +94,7 @@ private:
 	VkFormat swap_chain_image_format;
 	VkExtent2D swap_chain_extent;
 	VkRenderPass render_pass;
+	VkDescriptorSetLayout descriptor_set_layout;
 	VkPipelineLayout pipeline_layout;
 	VkPipeline graphics_pipeline;
 	VkCommandPool command_pool;
@@ -89,7 +102,11 @@ private:
 	VkDeviceMemory vertex_buffer_memory;
 	VkBuffer index_buffer;
 	VkDeviceMemory index_buffer_memory;
+	VkDescriptorPool descriptor_pool;
+	std::vector<VkDescriptorSet> descriptor_sets;
 
+	std::vector<VkBuffer> uniform_buffers;
+	std::vector<VkDeviceMemory> uniform_buffers_memory;
 	std::vector<VkSemaphore> image_available_semaphores;
 	std::vector<VkSemaphore> render_finished_semaphores;
 	std::vector<VkImage> swap_chain_images;
@@ -151,11 +168,15 @@ private:
 		create_swap_chain();
 		create_image_views();
 		create_render_pass();
+		create_descriptor_set_layout();
 		create_graphics_pipeline();
 		create_framebuffers();
 		create_command_pool();
 		create_vertex_buffer();
 		create_index_buffer();
+		create_uniform_buffers();
+		create_descriptor_pool();
+		create_descriptor_sets();
 		create_command_buffers();
 		create_sync_objects();
 	}
@@ -176,6 +197,9 @@ private:
 		// TODO: We can sometimes use the old render pass
 		create_render_pass();
 		create_framebuffers();
+		create_uniform_buffers();
+		create_descriptor_pool();
+		create_descriptor_sets();
 
 		if (swap_chain_images.size() != command_buffers.size())
 		{
@@ -740,7 +764,7 @@ private:
 		rasterizer_create_info.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterizer_create_info.lineWidth = 1.0f;
 		rasterizer_create_info.cullMode = VK_CULL_MODE_BACK_BIT;
-		rasterizer_create_info.frontFace = VK_FRONT_FACE_CLOCKWISE;
+		rasterizer_create_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		rasterizer_create_info.depthBiasEnable = VK_FALSE;
 		rasterizer_create_info.depthBiasConstantFactor = 0.0f;
 		rasterizer_create_info.depthBiasClamp = 0.0f;
@@ -786,8 +810,8 @@ private:
 		// https://vulkan-tutorial.com/en/Drawing_a_triangle/Graphics_pipeline_basics/Fixed_functions#page_Pipeline-layout
 		VkPipelineLayoutCreateInfo pipeline_layout_create_info{};
 		pipeline_layout_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-		pipeline_layout_create_info.setLayoutCount = 0;
-		pipeline_layout_create_info.pSetLayouts = nullptr;
+		pipeline_layout_create_info.setLayoutCount = 1;
+		pipeline_layout_create_info.pSetLayouts = &descriptor_set_layout;
 		pipeline_layout_create_info.pushConstantRangeCount = 0;
 		pipeline_layout_create_info.pPushConstantRanges = nullptr;
 
@@ -943,6 +967,19 @@ private:
 		vkFreeMemory(device, staging_buffer_memory, nullptr);
 	}
 
+	void create_uniform_buffers()
+	{
+		VkDeviceSize buffer_size = sizeof(Uniform_Buffer_Object);
+
+		uniform_buffers.resize(swap_chain_images.size());
+		uniform_buffers_memory.resize(swap_chain_images.size());
+
+		for (size_t i = 0; i < swap_chain_images.size(); i++)
+		{
+			create_buffer(buffer_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniform_buffers[i], uniform_buffers_memory[i]);
+		}
+	}
+
 	void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage_flags, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& buffer_memory)
 	{
 		VkBufferCreateInfo buffer_info{};
@@ -1096,7 +1133,8 @@ private:
 
 		vkCmdBindIndexBuffer(command_buffers[framebuffer_index], index_buffer, 0, VK_INDEX_TYPE_UINT32);
 
-		//vkCmdDraw(command_buffers[framebuffer_index], static_cast<uint32_t>(vertices.size()), 1, 0, 0);
+		vkCmdBindDescriptorSets(command_buffers[framebuffer_index], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &descriptor_sets[framebuffer_index], 0, nullptr);
+
 		vkCmdDrawIndexed(command_buffers[framebuffer_index], static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
 
 		vkCmdEndRenderPass(command_buffers[framebuffer_index]);
@@ -1130,6 +1168,99 @@ private:
 		}
 	}
 
+	// https://vulkan-tutorial.com/Uniform_buffers/Descriptor_layout_and_buffer#page_Descriptor-set-layout
+	void create_descriptor_set_layout()
+	{
+		VkDescriptorSetLayoutBinding ubo_layout_binding{};
+		ubo_layout_binding.binding = 0;
+		ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		ubo_layout_binding.descriptorCount = 1;
+		ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
+		ubo_layout_binding.pImmutableSamplers = nullptr;
+
+		VkDescriptorSetLayoutCreateInfo layout_info{};
+		layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+		layout_info.bindingCount = 1;
+		layout_info.pBindings = &ubo_layout_binding;
+
+		if (vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create descriptor set layout.");
+	}
+
+	void update_uniform_buffer(uint32_t current_image)
+	{
+		// Using a UBO this way is not the most efficient way to pass frequently changing values to the shader.
+		// A more efficient way to pass a small buffer of data to shaders are push constants.
+		static auto start_time = std::chrono::high_resolution_clock::now();
+
+		auto current_time = std::chrono::high_resolution_clock::now();
+		float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
+
+		Uniform_Buffer_Object ubo{};
+		ubo.model = glm::rotate(glm::mat4(1.0), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.proj = glm::perspective(glm::radians(45.0f), swap_chain_extent.width / (float) swap_chain_extent.height, 0.1f, 10.0f);
+		ubo.proj[1][1] *= -1; // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted.
+
+		void* data;
+		vkMapMemory(device, uniform_buffers_memory[current_image], 0, sizeof(ubo), 0, &data);
+		memcpy(data, &ubo, sizeof(ubo));
+		vkUnmapMemory(device, uniform_buffers_memory[current_image]);
+	}
+
+	void create_descriptor_pool()
+	{
+		VkDescriptorPoolSize pool_size{};
+		pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		pool_size.descriptorCount = static_cast<uint32_t>(swap_chain_images.size());
+
+		VkDescriptorPoolCreateInfo pool_info{};
+		pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+		pool_info.poolSizeCount = 1;
+		pool_info.pPoolSizes = &pool_size;
+		pool_info.maxSets = static_cast<uint32_t>(swap_chain_images.size());
+
+		if (vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptor_pool) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create descriptor pool.");
+	}
+
+	void create_descriptor_sets()
+	{
+		std::vector<VkDescriptorSetLayout> layouts(swap_chain_images.size(), descriptor_set_layout);
+
+		VkDescriptorSetAllocateInfo alloc_info{};
+		alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+		alloc_info.descriptorPool = descriptor_pool;
+		alloc_info.descriptorSetCount = static_cast<uint32_t>(swap_chain_images.size());
+		alloc_info.pSetLayouts = layouts.data();
+
+		descriptor_sets.resize(swap_chain_images.size());
+
+		if (vkAllocateDescriptorSets(device, &alloc_info, descriptor_sets.data()) != VK_SUCCESS)
+			throw std::runtime_error("Failed to allocate descriptor sets.");
+
+		for (size_t i = 0; i < swap_chain_images.size(); i++)
+		{
+			VkDescriptorBufferInfo buffer_info{};
+			buffer_info.buffer = uniform_buffers[i];
+			buffer_info.offset = 0;
+			buffer_info.range = sizeof(Uniform_Buffer_Object);
+
+			VkWriteDescriptorSet descriptor_write{};
+			descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptor_write.dstSet = descriptor_sets[i];
+			descriptor_write.dstBinding = 0;
+			descriptor_write.dstArrayElement = 0;
+			descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptor_write.descriptorCount = 1;
+			descriptor_write.pBufferInfo = &buffer_info;
+			descriptor_write.pImageInfo = nullptr;
+			descriptor_write.pTexelBufferView = nullptr;
+
+			vkUpdateDescriptorSets(device, 1, &descriptor_write, 0, nullptr);
+		}
+	}
+
 	void draw_frame()
 	{
 		vkWaitForFences(device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
@@ -1151,6 +1282,8 @@ private:
 
 		// Mark the image as now being in use by this frame
 		images_in_flight[image_index] = in_flight_fences[current_frame];
+
+		update_uniform_buffer(image_index);
 
 		https://vulkan-tutorial.com/en/Drawing_a_triangle/Drawing/Rendering_and_presentation#page_Submitting-the-command-buffer
 		VkSubmitInfo submit_info{};
@@ -1213,12 +1346,22 @@ private:
 			vkDestroyImageView(device, swap_chain_image_views[i], nullptr);
 
 		vkDestroySwapchainKHR(device, swap_chain, nullptr);
+
+		for (size_t i = 0; i < swap_chain_images.size(); i++)
+		{
+			vkDestroyBuffer(device, uniform_buffers[i], nullptr);
+			vkFreeMemory(device, uniform_buffers_memory[i], nullptr);
+		}
+
+		vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
 	}
 
 	void cleanup()
 	{
 		for (size_t i = 0; i < swap_chain_framebuffers.size(); i++)
 			vkDestroyFramebuffer(device, swap_chain_framebuffers[i], nullptr);
+
+		vkDestroyDescriptorSetLayout(device, descriptor_set_layout, nullptr);
 
 		vkDestroyPipeline(device, graphics_pipeline, nullptr);
 		
@@ -1230,6 +1373,14 @@ private:
 			vkDestroyImageView(device, swap_chain_image_views[i], nullptr);
 
 		vkDestroySwapchainKHR(device, swap_chain, nullptr);
+
+		for (size_t i = 0; i < swap_chain_images.size(); i++)
+		{
+			vkDestroyBuffer(device, uniform_buffers[i], nullptr);
+			vkFreeMemory(device, uniform_buffers_memory[i], nullptr);
+		}
+
+		vkDestroyDescriptorPool(device, descriptor_pool, nullptr);
 
 		vkDestroyBuffer(device, index_buffer, nullptr);
 		vkFreeMemory(device, index_buffer_memory, nullptr);
