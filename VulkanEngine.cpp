@@ -1,6 +1,7 @@
 ﻿#define GLFW_INCLUDE_VULKAN
 #include <GLFW/glfw3.h>
 
+#define GLM_ENABLE_EXPERIMENTAL
 #define GLM_FORCE_RADIANS
 // https://vulkan-tutorial.com/en/Uniform_buffers/Descriptor_pool_and_sets#page_Alignment-requirements
 // #define GLM_FORCE_DEFAULT_ALIGNED_GENTYPES
@@ -9,9 +10,13 @@
 #define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtx/hash.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
+
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h> 
 
 #include <algorithm>
 #include <array>
@@ -22,6 +27,7 @@
 #include <iostream>
 #include <set>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 struct Vertex {
@@ -60,7 +66,21 @@ struct Vertex {
 
 		return attribute_descriptions;
 	}
+
+	bool operator==(const Vertex& other) const {
+		return pos == other.pos && color == other.color && tex_coord == other.tex_coord;
+	}
 };
+
+namespace std {
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const {
+			return ((hash<glm::vec3>()(vertex.pos) ^
+			(hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+			(hash<glm::vec2>()(vertex.tex_coord) << 1);
+		}
+	};
+}
 
 struct Uniform_Buffer_Object
 {
@@ -78,6 +98,8 @@ public:
 	const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 	const uint32_t WIDTH = 800;
 	const uint32_t HEIGHT = 600;
+	const std::string MODEL_PATH = "models/viking_room.obj";
+	const std::string TEXTURE_PATH = "textures/viking_room.png";
 
 #ifdef NDEBUG
 	const bool enable_validation_layers = false;
@@ -136,28 +158,14 @@ private:
 	std::vector<VkFence> in_flight_fences;
 	std::vector<VkFence> images_in_flight;
 
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
+
 	size_t current_frame = 0;
 	bool framebuffer_resized = false;
 
 	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation" };
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
-
-	const std::vector<Vertex> vertices = {
-		{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-		{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-		{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-		{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
-
-		{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
-		{{0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
-		{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
-		{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
-	};
-
-	const std::vector<uint32_t> indices = {
-		0, 1, 2, 2, 3, 0,
-		4, 5, 6, 6, 7, 4
-	};
 
 	struct QueueFamilyIndices
 	{
@@ -202,6 +210,7 @@ private:
 		create_texture_image();
 		create_texture_image_view();
 		create_texture_sampler();
+		load_model();
 		create_vertex_buffer();
 		create_index_buffer();
 		create_uniform_buffers();
@@ -817,7 +826,7 @@ private:
 		rasterizer_info.rasterizerDiscardEnable = VK_FALSE;
 		rasterizer_info.polygonMode = VK_POLYGON_MODE_FILL;
 		rasterizer_info.lineWidth = 1.0f;
-		rasterizer_info.cullMode = VK_CULL_MODE_BACK_BIT;
+		rasterizer_info.cullMode = VK_CULL_MODE_NONE;
 		rasterizer_info.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 		rasterizer_info.depthBiasEnable = VK_FALSE;
 		rasterizer_info.depthBiasConstantFactor = 0.0f;
@@ -1028,8 +1037,8 @@ private:
 	{
 		// https://vulkan-tutorial.com/Texture_mapping/Images#page_Staging-buffer
 		int tex_width, tex_height, tex_channels;
-		// FIXME: don't hardcode this
-		stbi_uc* pixels = stbi_load("textures/texture.jpg", &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
+
+		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &tex_width, &tex_height, &tex_channels, STBI_rgb_alpha);
 
 		VkDeviceSize image_size = tex_width * tex_height * 4;
 
@@ -1533,7 +1542,7 @@ private:
 		float time = std::chrono::duration<float, std::chrono::seconds::period>(current_time - start_time).count();
 
 		Uniform_Buffer_Object ubo{};
-		ubo.model = glm::rotate(glm::mat4(1.0), time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f));
+		ubo.model = glm::rotate(glm::mat4(1.0), time * glm::radians(45.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f));
 		ubo.proj = glm::perspective(glm::radians(45.0f), swap_chain_extent.width / (float) swap_chain_extent.height, 0.1f, 10.0f);
 		ubo.proj[1][1] *= -1; // GLM was originally designed for OpenGL, where the Y coordinate of the clip coordinates is inverted.
@@ -1607,6 +1616,52 @@ private:
 			descriptor_writes[1].pImageInfo = &image_info;
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
+		}
+	}
+
+	void load_model()
+	{
+		tinyobj::attrib_t attrib;
+		std::vector<tinyobj::shape_t> shapes;
+		std::vector<tinyobj::material_t> materials;
+		std::string warn, err;
+
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str()))
+			throw std::runtime_error(warn + err);
+
+		for (const auto& shape : shapes)
+		{
+			std::unordered_map<Vertex, uint32_t> unique_vertices{};
+
+			for (const auto& index : shape.mesh.indices)
+			{
+				Vertex vertex{};
+
+				vertex.pos = {
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2]
+				};
+
+				vertex.tex_coord = {
+					attrib.texcoords[2 * index.texcoord_index + 0],
+
+					// The OBJ format assumes a coordinate system where a vertical coordinate of 0 means the bottom of the image,
+					// however we've uploaded our image into Vulkan in a top to bottom orientation where 0 means the top of the image.
+					// Solve this by flipping the vertical component of the texture coordinates.
+					1.0f - attrib.texcoords[2 * index.texcoord_index + 1]
+				};
+
+				vertex.color = {1.0f, 1.0f, 1.0f};
+
+				if (unique_vertices.count(vertex) == 0) 
+				{
+					unique_vertices[vertex] = static_cast<uint32_t>(vertices.size());
+					vertices.push_back(vertex);
+				}
+				
+				indices.push_back(unique_vertices[vertex]);
+			}
 		}
 	}
 
