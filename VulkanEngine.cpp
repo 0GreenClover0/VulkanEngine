@@ -24,6 +24,7 @@
 struct Vertex {
 	glm::vec2 pos;
 	glm::vec3 color;
+	glm::vec2 tex_coord;
 
 	static VkVertexInputBindingDescription get_binding_description()
 	{
@@ -35,9 +36,10 @@ struct Vertex {
 		return binding_description;
 	}
 
-	static std::array<VkVertexInputAttributeDescription, 2> get_attribute_descriptions()
+	static std::array<VkVertexInputAttributeDescription, 3> get_attribute_descriptions()
 	{
-		std::array<VkVertexInputAttributeDescription, 2> attribute_descriptions{};
+		std::array<VkVertexInputAttributeDescription, 3> attribute_descriptions{};
+
 		attribute_descriptions[0].binding = 0;
 		attribute_descriptions[0].location = 0;
 		attribute_descriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
@@ -47,6 +49,11 @@ struct Vertex {
 		attribute_descriptions[1].location = 1;
 		attribute_descriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
 		attribute_descriptions[1].offset = offsetof(Vertex, color);
+
+		attribute_descriptions[2].binding = 0;
+		attribute_descriptions[2].location = 2;
+		attribute_descriptions[2].format = VK_FORMAT_R32G32_SFLOAT;
+		attribute_descriptions[2].offset = offsetof(Vertex, tex_coord);
 
 		return attribute_descriptions;
 	}
@@ -108,6 +115,8 @@ private:
 	VkDescriptorPool descriptor_pool;
 	VkImage texture_image;
 	VkDeviceMemory texture_image_memory;
+	VkImageView texture_image_view;
+	VkSampler texture_sampler;
 
 	std::vector<VkDescriptorSet> descriptor_sets;
 	std::vector<VkBuffer> uniform_buffers;
@@ -128,10 +137,10 @@ private:
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 	const std::vector<Vertex> vertices = {
-		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
+		{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+		{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+		{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+		{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
 	};
 
 	const std::vector<uint32_t> indices = {
@@ -178,6 +187,8 @@ private:
 		create_framebuffers();
 		create_command_pool();
 		create_texture_image();
+		create_texture_image_view();
+		create_texture_sampler();
 		create_vertex_buffer();
 		create_index_buffer();
 		create_uniform_buffers();
@@ -380,6 +391,10 @@ private:
 		if (swap_chain_support_details.formats.empty() || swap_chain_support_details.present_modes.empty())
 			return false;
 
+		// TODO: maybe don't return false and just set the sampler info to not use anisotropic filtering?
+		if (!device_features.samplerAnisotropy)
+			return false;
+
 		return true;
 	}
 
@@ -462,6 +477,7 @@ private:
 		}
 
 		VkPhysicalDeviceFeatures device_features{};
+		device_features.samplerAnisotropy = VK_TRUE;
 
 		VkDeviceCreateInfo create_info{};
 		create_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -645,26 +661,28 @@ private:
 	{
 		swap_chain_image_views.resize(swap_chain_images.size());
 
-		for (int i = 0; i < swap_chain_images.size(); i++)
-		{
-			VkImageViewCreateInfo create_info{};
-			create_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-			create_info.image = swap_chain_images[i];
-			create_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
-			create_info.format = swap_chain_image_format;
-			create_info.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-			create_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-			create_info.subresourceRange.baseMipLevel = 0;
-			create_info.subresourceRange.levelCount = 1;
-			create_info.subresourceRange.baseArrayLayer = 0;
-			create_info.subresourceRange.layerCount = 1;
+		for (uint32_t i = 0; i < swap_chain_images.size(); i++)
+			swap_chain_image_views[i] = create_image_view(swap_chain_images[i], swap_chain_image_format);
+	}
 
-			if (vkCreateImageView(device, &create_info, nullptr, &swap_chain_image_views[i]) != VK_SUCCESS)
-				throw std::runtime_error("Failed to create an image view");
-		}
+	VkImageView create_image_view(VkImage image, VkFormat format)
+	{
+		VkImageViewCreateInfo view_info{};
+		view_info.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+		view_info.image = image;
+		view_info.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		view_info.format = format;
+		view_info.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		view_info.subresourceRange.baseMipLevel = 0;
+		view_info.subresourceRange.levelCount = 1;
+		view_info.subresourceRange.baseArrayLayer = 0;
+		view_info.subresourceRange.layerCount = 1;
+
+		VkImageView image_view;
+		if (vkCreateImageView(device, &view_info, nullptr, &image_view) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create an image view");
+
+		return image_view;
 	}
 
 	void create_render_pass()
@@ -992,6 +1010,39 @@ private:
 
 		vkDestroyBuffer(device, staging_buffer, nullptr);
 		vkFreeMemory(device, staging_buffer_memory, nullptr);
+	}
+
+	void create_texture_image_view()
+	{
+		texture_image_view = create_image_view(texture_image, VK_FORMAT_R8G8B8A8_SRGB);
+	}
+
+	void create_texture_sampler()
+	{
+		VkSamplerCreateInfo sampler_info{};
+		sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+		sampler_info.magFilter = VK_FILTER_LINEAR;
+		sampler_info.minFilter = VK_FILTER_LINEAR;
+		sampler_info.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		sampler_info.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		sampler_info.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+		sampler_info.anisotropyEnable = VK_TRUE;
+
+		VkPhysicalDeviceProperties properties{};
+		vkGetPhysicalDeviceProperties(physical_device, &properties);
+
+		sampler_info.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+		sampler_info.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+		sampler_info.unnormalizedCoordinates = VK_FALSE;
+		sampler_info.compareEnable = VK_FALSE;
+		sampler_info.compareOp = VK_COMPARE_OP_ALWAYS;
+		sampler_info.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+		sampler_info.mipLodBias = 0.0f;
+		sampler_info.minLod = 0.0f;
+		sampler_info.maxLod = 0.0f;
+
+		if (vkCreateSampler(device, &sampler_info, nullptr, &texture_sampler) != VK_SUCCESS)
+			throw std::runtime_error("Failed to create texture sampler");
 	}
 
 	// https://vulkan-tutorial.com/en/Vertex_buffers/Vertex_buffer_creation#page_Buffer-creation
@@ -1353,10 +1404,19 @@ private:
 		ubo_layout_binding.stageFlags = VK_SHADER_STAGE_VERTEX_BIT;
 		ubo_layout_binding.pImmutableSamplers = nullptr;
 
+		VkDescriptorSetLayoutBinding sampler_layout_binding{};
+		sampler_layout_binding.binding = 1;
+		sampler_layout_binding.descriptorCount = 1;
+		sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		sampler_layout_binding.pImmutableSamplers = nullptr;
+		sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+		std::array<VkDescriptorSetLayoutBinding, 2> bindings = {ubo_layout_binding, sampler_layout_binding};
+
 		VkDescriptorSetLayoutCreateInfo layout_info{};
 		layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-		layout_info.bindingCount = 1;
-		layout_info.pBindings = &ubo_layout_binding;
+		layout_info.bindingCount = static_cast<uint32_t>(bindings.size());
+		layout_info.pBindings = bindings.data();
 
 		if (vkCreateDescriptorSetLayout(device, &layout_info, nullptr, &descriptor_set_layout) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create descriptor set layout.");
@@ -1385,14 +1445,16 @@ private:
 
 	void create_descriptor_pool()
 	{
-		VkDescriptorPoolSize pool_size{};
-		pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-		pool_size.descriptorCount = static_cast<uint32_t>(swap_chain_images.size());
+		std::array<VkDescriptorPoolSize, 2> pool_sizes{};
+		pool_sizes[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+		pool_sizes[0].descriptorCount = static_cast<uint32_t>(swap_chain_images.size());
+		pool_sizes[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+		pool_sizes[1].descriptorCount = static_cast<uint32_t>(swap_chain_images.size());
 
 		VkDescriptorPoolCreateInfo pool_info{};
 		pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-		pool_info.poolSizeCount = 1;
-		pool_info.pPoolSizes = &pool_size;
+		pool_info.poolSizeCount = static_cast<uint32_t>(pool_sizes.size());
+		pool_info.pPoolSizes = pool_sizes.data();
 		pool_info.maxSets = static_cast<uint32_t>(swap_chain_images.size());
 
 		if (vkCreateDescriptorPool(device, &pool_info, nullptr, &descriptor_pool) != VK_SUCCESS)
@@ -1421,18 +1483,29 @@ private:
 			buffer_info.offset = 0;
 			buffer_info.range = sizeof(Uniform_Buffer_Object);
 
-			VkWriteDescriptorSet descriptor_write{};
-			descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-			descriptor_write.dstSet = descriptor_sets[i];
-			descriptor_write.dstBinding = 0;
-			descriptor_write.dstArrayElement = 0;
-			descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-			descriptor_write.descriptorCount = 1;
-			descriptor_write.pBufferInfo = &buffer_info;
-			descriptor_write.pImageInfo = nullptr;
-			descriptor_write.pTexelBufferView = nullptr;
+			VkDescriptorImageInfo image_info{};
+			image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			image_info.imageView = texture_image_view;
+			image_info.sampler = texture_sampler;
 
-			vkUpdateDescriptorSets(device, 1, &descriptor_write, 0, nullptr);
+			std::array<VkWriteDescriptorSet, 2> descriptor_writes{};
+			descriptor_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptor_writes[0].dstSet = descriptor_sets[i];
+			descriptor_writes[0].dstBinding = 0;
+			descriptor_writes[0].dstArrayElement = 0;
+			descriptor_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+			descriptor_writes[0].descriptorCount = 1;
+			descriptor_writes[0].pBufferInfo = &buffer_info;
+
+			descriptor_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+			descriptor_writes[1].dstSet = descriptor_sets[i];
+			descriptor_writes[1].dstBinding = 1;
+			descriptor_writes[1].dstArrayElement = 0;
+			descriptor_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+			descriptor_writes[1].descriptorCount = 1;
+			descriptor_writes[1].pImageInfo = &image_info;
+
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(descriptor_writes.size()), descriptor_writes.data(), 0, nullptr);
 		}
 	}
 
@@ -1549,6 +1622,8 @@ private:
 
 		vkDestroySwapchainKHR(device, swap_chain, nullptr);
 
+		vkDestroySampler(device, texture_sampler, nullptr);
+		vkDestroyImageView(device, texture_image_view, nullptr);
 		vkDestroyImage(device, texture_image, nullptr);
 		vkFreeMemory(device, texture_image_memory, nullptr);
 
