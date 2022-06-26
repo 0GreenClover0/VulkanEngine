@@ -96,8 +96,9 @@ public:
 	bool was_window_resized() { return framebuffer_resized; }
 
 	const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
-	const uint32_t WIDTH = 800;
-	const uint32_t HEIGHT = 600;
+	const uint32_t WIDTH = 1920;
+	const uint32_t HEIGHT = 1080;
+	const std::string WINDOW_NAME = "Game engine";
 	const std::string MODEL_PATH = "models/viking_room.obj";
 	const std::string TEXTURE_PATH = "textures/viking_room.png";
 
@@ -169,7 +170,7 @@ private:
 	size_t current_frame = 0;
 	bool framebuffer_resized = false;
 
-	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation" };
+	const std::vector<const char*> validation_layers = { "VK_LAYER_KHRONOS_validation", "VK_LAYER_LUNARG_monitor"};
 	const std::vector<const char*> device_extensions = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 	struct QueueFamilyIndices
@@ -191,7 +192,7 @@ private:
 
 		glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-		window = glfwCreateWindow(WIDTH, HEIGHT, "Vulkan", nullptr, nullptr);
+		window = glfwCreateWindow(WIDTH, HEIGHT, WINDOW_NAME.c_str(), nullptr, nullptr);
 		glfwSetWindowUserPointer(window, this);
 		glfwSetFramebufferSizeCallback(window, framebuffer_resize_callback);
 	}
@@ -1175,8 +1176,11 @@ private:
 
 			vkCmdPipelineBarrier(command_buffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 
-			if (mip_width > 1) mip_width /= 2;
-			if (mip_height > 1) mip_height /= 2;
+			if (mip_width > 1)
+				mip_width /= 2;
+
+			if (mip_height > 1)
+				mip_height /= 2;
 		}
 
 		// For the last mip map
@@ -1962,6 +1966,7 @@ private:
 
 		vkDestroyInstance(instance, nullptr);
 
+		// GLWF
 		glfwDestroyWindow(window);
 
 		glfwTerminate();
