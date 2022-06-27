@@ -147,17 +147,17 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="FileStream.cpp" />
-    <ClCompile Include="ModelLoader.cpp" />
-    <ClCompile Include="Renderer.cpp" />
-    <ClCompile Include="main.cpp" />
-    <ClCompile Include="Window.cpp" />
+    <ClCompile Include="source/FileStream.cpp" />
+    <ClCompile Include="source/ModelLoader.cpp" />
+    <ClCompile Include="source/Renderer.cpp" />
+    <ClCompile Include="source/main.cpp" />
+    <ClCompile Include="source/Window.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="FileStream.hpp" />
-    <ClInclude Include="ModelLoader.hpp" />
-    <ClInclude Include="Renderer.hpp" />
-    <ClInclude Include="Window.hpp" />
+    <ClInclude Include="source/FileStream.hpp" />
+    <ClInclude Include="source/ModelLoader.hpp" />
+    <ClInclude Include="source/Renderer.hpp" />
+    <ClInclude Include="source/Window.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
