@@ -116,14 +116,14 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\user\Documents\Visual Studio 2022\Libraries\glm;C:\Users\user\Documents\Visual Studio 2022\Libraries\glfw-3.3.6.bin.WIN64\include;E:\Programs\VulkanSDK\1.2.198.1\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programs\Vulkan SDK\Include;D:\Libraries\glm-0.9.9.8\glm;D:\Libraries\glfw-3.3.6.bin.WIN64\include;D:\Libraries\stb-master;D:\Libraries\tinyobjloader-master</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>E:\Programs\VulkanSDK\1.2.198.1\Lib;C:\Users\user\Documents\Visual Studio 2022\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>E:\Programs\VulkanSDK\1.2.198.1\Lib\vulkan-1.lib;C:\Users\user\Documents\Visual Studio 2022\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022\glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022;D:\Programs\Vulkan SDK\Lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>D:\Programs\Vulkan SDK\Lib\vulkan-1.lib;D:\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022\glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -134,7 +134,7 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <AdditionalIncludeDirectories>C:\Users\user\Documents\Visual Studio 2022\Libraries\glm;C:\Users\user\Documents\Visual Studio 2022\Libraries\glfw-3.3.6.bin.WIN64\include;E:\Programs\VulkanSDK\1.2.198.1\Include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\Programs\Vulkan SDK\Include;D:\Libraries\glm-0.9.9.8\glm;D:\Libraries\glfw-3.3.6.bin.WIN64\include;D:\Libraries\stb-master;D:\Libraries\tinyobjloader-master</AdditionalIncludeDirectories>
       <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
@@ -142,12 +142,22 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>E:\Programs\VulkanSDK\1.2.198.1\Lib;C:\Users\user\Documents\Visual Studio 2022\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>E:\Programs\VulkanSDK\1.2.198.1\Lib\vulkan-1.lib;C:\Users\user\Documents\Visual Studio 2022\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022\glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022;D:\Programs\Vulkan SDK\Lib</AdditionalLibraryDirectories>
+      <AdditionalDependencies>D:\Programs\Vulkan SDK\Lib\vulkan-1.lib;D:\Libraries\glfw-3.3.6.bin.WIN64\lib-vc2022\glfw3.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="VulkanEngine.cpp" />
+    <ClCompile Include="FileStream.cpp" />
+    <ClCompile Include="ModelLoader.cpp" />
+    <ClCompile Include="Renderer.cpp" />
+    <ClCompile Include="main.cpp" />
+    <ClCompile Include="Window.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="FileStream.hpp" />
+    <ClInclude Include="ModelLoader.hpp" />
+    <ClInclude Include="Renderer.hpp" />
+    <ClInclude Include="Window.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
